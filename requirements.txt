@@ -1,0 +1,11 @@
+aiortc
+av
+numpy
+opencv-python
+Pillow
+ultralytics
+websockets
+torch==2.3.0+cu118 # (Replace with the actual latest version compatible with your CUDA)
+torchvision==0.16.0+cu118 # (Replace with the actual latest version compatible with your CUDA)
+torchaudio==2.3.0+cu118 # (Replace with the actual latest version compatible with your CUDA)
+--index-url https://download.pytorch.org/whl/cu118
