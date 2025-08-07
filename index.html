@@ -1,0 +1,174 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Stream</title>
+    <style>
+        #remoteVideo {
+            width: 640px;
+            height: 480px;
+            background: black; /* Black background to distinguish from white screen */
+        }
+        #playButton {
+            margin-top: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <video id="remoteVideo" autoplay muted></video>
+    <br>
+    <button id="playButton">Play Video</button>
+    <script>
+        let ws = new WebSocket('wss://websockettest-eggy.onrender.com');
+        let pc = null;
+        const videoElement = document.getElementById('remoteVideo');
+        const playButton = document.getElementById('playButton');
+
+        // Debug video element events
+        videoElement.oncanplay = () => {
+            console.log('Video canplay: readyState=', videoElement.readyState, 'networkState=', videoElement.networkState);
+        };
+        videoElement.onplaying = () => {
+            console.log('Video is playing');
+        };
+        videoElement.onerror = () => {
+            console.error('Video error:', videoElement.error);
+        };
+
+        function initializeWebRTC() {
+            // Clear previous video stream
+            videoElement.srcObject = null;
+
+            pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            pc.ontrack = (event) => {
+                console.log('Received stream:', event.streams[0]);
+                console.log('Stream tracks:', event.streams[0].getTracks());
+                videoElement.srcObject = event.streams[0];
+                console.log('Received video track');
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send('CANDIDATE!' + JSON.stringify({
+                        SdpMid: event.candidate.sdpMid,
+                        SdpMLineIndex: event.candidate.sdpMLineIndex,
+                        Candidate: event.candidate.candidate
+                    }));
+                    console.log('Sent ICE candidate');
+                }
+            };
+
+            pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                ws.send('OFFER!' + JSON.stringify({ Sdp: pc.localDescription.sdp }));
+                console.log('Sent OFFER: ' + pc.localDescription.sdp);
+            }).catch(err => console.error('Error creating offer:', err));
+        }
+
+        ws.onopen = () => {
+            console.log('WebSocket connection opened');
+            initializePostInteraction();
+        };
+
+        function initializePostInteraction() {
+            // Initialize WebRTC only after user interaction
+            playButton.onclick = () => {
+                initializeWebRTC();
+                playButton.disabled = true; // Disable button after click
+                videoElement.play().catch(err => console.error('Manual play error:', err));
+            };
+        }
+
+        ws.onmessage = async (event) => {
+            let message;
+            if (typeof event.data === 'string') {
+                message = event.data;
+            } else {
+                message = await event.data.text(); // Handle Blob or other types
+            }
+            console.log('Received message:', message);
+            try {
+                if (message.startsWith('ANSWER!')) {
+                    const data = JSON.parse(message.slice(7));
+                    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.Sdp }));
+                    console.log('Set remote description (answer)');
+                } else if (message.startsWith('CANDIDATE!')) {
+                    const data = JSON.parse(message.slice(10));
+                    await pc.addIceCandidate(new RTCIceCandidate({
+                        candidate: data.Candidate,
+                        sdpMid: data.SdpMid,
+                        sdpMLineIndex: data.SdpMLineIndex
+                    }));
+                    console.log('Added ICE candidate');
+                } else {
+                    console.log('Unknown message type:', message);
+                }
+            } catch (err) {
+                console.error('Error processing message:', err, 'Message:', message);
+            }
+        };
+
+        ws.onerror = (error) => console.error('WebSocket error:', error);
+
+        ws.onclose = () => {
+            console.log('WebSocket connection closed, attempting to reconnect...');
+            setTimeout(() => {
+                ws = new WebSocket('wss://websockettest-eggy.onrender.com');
+                ws.onopen = initializePostInteraction;
+                ws.onmessage = ws.onmessage;
+                ws.onerror = ws.onerror;
+                ws.onclose = ws.onclose;
+            }, 5000);
+        };
+
+        window.onbeforeunload = () => {
+            if (pc) pc.close();
+            if (ws) ws.close();
+            console.log('Cleaned up WebRTC and WebSocket');
+        };
+    </script>
+</body>
+</html>
