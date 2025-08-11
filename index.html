@@ -1,0 +1,258 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB Camera Stream</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #logConsole {
+            max-height: 200px;
+            overflow-y: auto;
+            display: none; /* Hidden by default */
+        }
+        #logConsole.show {
+            display: block; /* Show when toggled */
+        }
+        /* Custom scrollbar for log console */
+        #logConsole::-webkit-scrollbar {
+            width: 8px;
+        }
+        #logConsole::-webkit-scrollbar-track {
+            background: #edf2f7;
+        }
+        #logConsole::-webkit-scrollbar-thumb {
+            background: #a0aec0;
+            border-radius: 4px;
+        }
+        #logConsole::-webkit-scrollbar-thumb:hover {
+            background: #718096;
+        }
+    </style>
+</head>
+<body class="bg-white flex flex-col items-center justify-center min-h-screen text-gray-800">
+    <h1 class="text-4xl font-bold mb-6 text-black">RGB Camera Stream</h1>
+    <div class="flex flex-col items-center">
+        <video id="remoteVideo" autoplay muted class="w-[640px] h-[480px] bg-black rounded-lg shadow-lg mb-4"></video>
+        <div class="flex space-x-4 mb-4">
+            <button id="startButton" class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-200">Start Stream</button>
+            <button id="stopButton" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-200" disabled>Stop Stream</button>
+        </div>
+        <div class="w-[640px]">
+            <button id="toggleLogButton" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-lg w-full flex justify-between items-center transition duration-200">
+                <span>Log Console</span>
+                <svg id="toggleIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </button>
+            <div id="logConsole" class="bg-gray-100 text-gray-700 p-4 rounded-b-lg text-sm font-mono border border-gray-300">
+                <p>Log console initialized.</p>
+            </div>
+        </div>
+    </div>
+    <script>
+        let ws = null;
+        let pc = null;
+        const videoElement = document.getElementById('remoteVideo');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const toggleLogButton = document.getElementById('toggleLogButton');
+        const toggleIcon = document.getElementById('toggleIcon');
+        const logConsole = document.getElementById('logConsole');
+
+        // Initialize log console
+        function log(message) {
+            const p = document.createElement('p');
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logConsole.appendChild(p);
+            logConsole.scrollTop = logConsole.scrollHeight; // Auto-scroll to bottom
+        }
+
+        // Toggle log console visibility
+        toggleLogButton.onclick = () => {
+            logConsole.classList.toggle('show');
+            toggleIcon.classList.toggle('rotate-180');
+        };
+
+        // Debug video element events
+        videoElement.oncanplay = () => {
+            log(`Video canplay: readyState=${videoElement.readyState}, networkState=${videoElement.networkState}`);
+        };
+        videoElement.onplaying = () => {
+            log('Video is playing');
+        };
+        videoElement.onerror = () => {
+            log(`Video error: ${videoElement.error.message}`);
+        };
+
+        function initializeWebSocket() {
+            ws = new WebSocket('wss://websockettest-eggy.onrender.com');
+            ws.onopen = () => {
+                log('WebSocket connection opened');
+                startButton.disabled = false;
+            };
+            ws.onmessage = async (event) => {
+                let message;
+                if (typeof event.data === 'string') {
+                    message = event.data;
+                } else {
+                    message = await event.data.text();
+                }
+                log(`Received message: ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`);
+                try {
+                    if (message.startsWith('ANSWER!')) {
+                        const data = JSON.parse(message.slice(7));
+                        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.Sdp }));
+                        log('Set remote description (answer)');
+                    } else if (message.startsWith('CANDIDATE!')) {
+                        const data = JSON.parse(message.slice(10));
+                        await pc.addIceCandidate(new RTCIceCandidate({
+                            candidate: data.Candidate,
+                            sdpMid: data.SdpMid,
+                            sdpMLineIndex: data.SdpMLineIndex
+                        }));
+                        log('Added ICE candidate from server');
+                    } else {
+                        log(`Unknown message type: ${message.slice(0, 50)}${message.length > 50 ? '...' : ''}`);
+                    }
+                } catch (err) {
+                    log(`Error processing message: ${err.message}`);
+                }
+            };
+            ws.onerror = (error) => {
+                log(`WebSocket error: ${error.message || 'Unknown error'}`);
+            };
+            ws.onclose = () => {
+                log('WebSocket connection closed, attempting to reconnect...');
+                setTimeout(() => {
+                    initializeWebSocket();
+                }, 5000);
+            };
+        }
+
+        function initializeWebRTC() {
+            // Clear previous video stream
+            videoElement.srcObject = null;
+
+            pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+            pc.addTransceiver('video', { direction: 'recvonly' });
+
+            pc.ontrack = (event) => {
+                log(`Received stream: ${event.streams[0].id}`);
+                log(`Stream tracks: ${event.streams[0].getTracks().map(t => t.kind).join(', ')}`);
+                videoElement.srcObject = event.streams[0];
+                log('Received video track');
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    ws.send('CANDIDATE!' + JSON.stringify({
+                        SdpMid: event.candidate.sdpMid,
+                        SdpMLineIndex: event.candidate.sdpMLineIndex,
+                        Candidate: event.candidate.candidate
+                    }));
+                    log('Sent ICE candidate to server');
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                log(`ICE connection state: ${pc.iceConnectionState}`);
+            };
+
+            pc.onconnectionstatechange = () => {
+                log(`Connection state: ${pc.connectionState}`);
+            };
+
+            pc.createOffer()
+                .then(offer => pc.setLocalDescription(offer))
+                .then(() => {
+                    ws.send('OFFER!' + JSON.stringify({ Sdp: pc.localDescription.sdp }));
+                    log(`Sent OFFER: ${pc.localDescription.sdp.slice(0, 50)}...`);
+                })
+                .catch(err => log(`Error creating offer: ${err.message}`));
+
+            startButton.disabled = true;
+            stopButton.disabled = false;
+        }
+
+        function stopStream() {
+            if (pc) {
+                pc.close();
+                pc = null;
+                log('WebRTC peer connection closed');
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                log('WebSocket connection closed');
+            }
+            videoElement.srcObject = null;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        }
+
+        // Initialize WebSocket on page load
+        initializeWebSocket();
+
+        // Button event listeners
+        startButton.onclick = () => {
+            if (ws.readyState === WebSocket.OPEN) {
+                initializeWebRTC();
+            } else {
+                log('WebSocket not connected, waiting for connection...');
+            }
+        };
+
+        stopButton.onclick = () => {
+            stopStream();
+        };
+
+        // Cleanup on page unload
+        window.onbeforeunload = () => {
+            if (pc) pc.close();
+            if (ws) ws.close();
+            log('Cleaned up WebRTC and WebSocket');
+        };
+    </script>
+</body>
+</html>
