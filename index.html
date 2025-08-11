@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGB and Thermal Camera Stream</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            font-size: 2.5em;
+        }
+        
+        .video-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-bottom: 30px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        
+        .video-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            min-width: 360px;
+        }
+        
+        .video-box:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+        }
+        
+        .video-box h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 1.3em;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        
+        .rgb-box h3 {
+            color: #4CAF50;
+        }
+        
+        .thermal-box h3 {
+            color: #FF6B35;
+        }
+        
+        video {
+            width: 320px;
+            height: 240px;
+            background-color: #000;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            transition: border-color 0.3s ease;
+        }
+        
+        video:hover {
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .status-indicator.disconnected {
+            background-color: #f44336;
+            box-shadow: 0 0 10px #f44336;
+        }
+        
+        .status-indicator.connecting {
+            background-color: #ff9800;
+            box-shadow: 0 0 10px #ff9800;
+            animation: pulse 1s infinite;
+        }
+        
+        .status-indicator.connected {
+            background-color: #4caf50;
+            box-shadow: 0 0 10px #4caf50;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .controls {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        button {
+            padding: 12px 30px;
+            margin: 8px;
+            background: linear-gradient(45deg, #2196F3, #21CBF3);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(33, 150, 243, 0.3);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(33, 150, 243, 0.4);
+        }
+        
+        button:disabled {
+            background: linear-gradient(45deg, #6c757d, #5a6268);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: 0 2px 8px rgba(108, 117, 125, 0.3);
+        }
+        
+        #log-console {
+            width: 100%;
+            height: 250px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            padding: 15px;
+            overflow-y: auto;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+        }
+        
+        .log-container {
+            margin-top: 20px;
+        }
+        
+        .log-container h3 {
+            margin-bottom: 15px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+        }
+        
+        .stream-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .stream-stats {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
+        
+        @media (max-width: 768px) {
+            .video-container {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .video-box {
+                min-width: auto;
+                width: 100%;
+                max-width: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>🎥 RGB and Thermal Camera Stream</h1>
+    
+    <div class="controls">
+        <button id="start-btn">
+            <span class="status-indicator disconnected" id="status-indicator"></span>
+            Start Stream
+        </button>
+        <button id="stop-btn" disabled>Stop Stream</button>
+    </div>
+    
+    <div class="video-container">
+        <div class="video-box rgb-box">
+            <h3>📹 RGB Stream (with YOLO Detection)</h3>
+            <div class="stream-info">
+                <span>Status: <span id="rgb-status">Disconnected</span></span>
+                <span class="stream-stats" id="rgb-stats">0 FPS</span>
+            </div>
+            <video id="rgb-video" autoplay playsinline muted></video>
+        </div>
+        <div class="video-box thermal-box">
+            <h3>🌡️ Thermal Stream</h3>
+            <div class="stream-info">
+                <span>Status: <span id="thermal-status">Disconnected</span></span>
+                <span class="stream-stats" id="thermal-stats">0 FPS</span>
+            </div>
+            <video id="thermal-video" autoplay playsinline muted></video>
+        </div>
+    </div>
+
+    <div class="log-container">
+        <h3>📋 System Log</h3>
+        <div id="log-console">
+            [INFO] Log console initialized - waiting for connection...<br>
+        </div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const rgbVideo = document.getElementById('rgb-video');
+        const thermalVideo = document.getElementById('thermal-video');
+        const logConsole = document.getElementById('log-console');
+        const statusIndicator = document.getElementById('status-indicator');
+        const rgbStatus = document.getElementById('rgb-status');
+        const thermalStatus = document.getElementById('thermal-status');
+        const rgbStats = document.getElementById('rgb-stats');
+        const thermalStats = document.getElementById('thermal-stats');
+
+        let pc = null;
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectDelay = 5000;
+        let rgbFrameCount = 0;
+        let thermalFrameCount = 0;
+        let lastStatsTime = Date.now();
+
+        function log(message, level = 'INFO') {
+            const timestamp = new Date().toLocaleTimeString();
+            const colorClass = level === 'ERROR' ? 'style="color: #ff4444;"' : 
+                              level === 'WARN' ? 'style="color: #ffaa00;"' : 
+                              'style="color: #00ff00;"';
+            logConsole.innerHTML += `<span ${colorClass}>[${timestamp}] [${level}] ${message}</span><br>`;
+            logConsole.scrollTop = logConsole.scrollHeight;
+            console.log(`[${level}] ${message}`);
+        }
+
+        function updateStatus(status) {
+            statusIndicator.className = `status-indicator ${status}`;
+            const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+            
+            if (status === 'connected') {
+                startBtn.innerHTML = `<span class="status-indicator connected"></span>Connected`;
+            } else if (status === 'connecting') {
+                startBtn.innerHTML = `<span class="status-indicator connecting"></span>Connecting...`;
+            } else {
+                startBtn.innerHTML = `<span class="status-indicator disconnected"></span>Start Stream`;
+            }
+        }
+
+        function updateStreamStats() {
+            const currentTime = Date.now();
+            const timeDiff = (currentTime - lastStatsTime) / 1000;
+            
+            if (timeDiff >= 1) {
+                const rgbFps = (rgbFrameCount / timeDiff).toFixed(1);
+                const thermalFps = (thermalFrameCount / timeDiff).toFixed(1);
+                
+                rgbStats.textContent = `${rgbFps} FPS`;
+                thermalStats.textContent = `${thermalFps} FPS`;
+                
+                rgbFrameCount = 0;
+                thermalFrameCount = 0;
+                lastStatsTime = currentTime;
+            }
+        }
+
+        async function startStream() {
+            try {
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateStatus('connecting');
+                log('Initializing WebRTC connection...');
+
+                pc = new RTCPeerConnection({
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayprojectsecret' }
+                    ]
+                });
+
+                // Add two video transceivers for RGB and thermal streams
+                pc.addTransceiver('video', { direction: 'recvonly' });
+                pc.addTransceiver('video', { direction: 'recvonly' });
+
+                let receivedTracks = [];
+
+                pc.ontrack = (event) => {
+                    log(`Received video track: ${event.track.kind}, id: ${event.track.id}, stream id: ${event.streams[0].id}`);
+                    
+                    if (event.track.kind === 'video') {
+                        receivedTracks.push({
+                            track: event.track,
+                            stream: event.streams[0]
+                        });
+                        
+                        log(`Total tracks received: ${receivedTracks.length}`);
+                        
+                        // Create separate MediaStream for each track
+                        if (receivedTracks.length === 1) {
+                            // First track (RGB with YOLO) - usually higher resolution
+                            const rgbStream = new MediaStream([event.track]);
+                            rgbVideo.srcObject = rgbStream;
+                            rgbStatus.textContent = 'Connected';
+                            log('✅ RGB video track connected (Track 1)');
+                            
+                            rgbVideo.onloadedmetadata = () => {
+                                log(`RGB stream resolution: ${rgbVideo.videoWidth}x${rgbVideo.videoHeight}`);
+                            };
+                            
+                            rgbVideo.ontimeupdate = () => {
+                                rgbFrameCount++;
+                                updateStreamStats();
+                            };
+                            
+                        } else if (receivedTracks.length === 2) {
+                            // Second track (Thermal) - usually lower resolution
+                            const thermalStream = new MediaStream([event.track]);
+                            thermalVideo.srcObject = thermalStream;
+                            thermalStatus.textContent = 'Connected';
+                            log('🌡️ Thermal video track connected (Track 2)');
+                            
+                            thermalVideo.onloadedmetadata = () => {
+                                log(`Thermal stream resolution: ${thermalVideo.videoWidth}x${thermalVideo.videoHeight}`);
+                            };
+                            
+                            thermalVideo.ontimeupdate = () => {
+                                thermalFrameCount++;
+                                updateStreamStats();
+                            };
+                        } else {
+                            log(`⚠️ Extra video track received (${receivedTracks.length}), ignoring`, 'WARN');
+                        }
+                    }
+                };
+
+                pc.onicecandidate = (event) => {
+                    if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+                        if (event.candidate.candidate.includes('.local')) {
+                            log(`Skipping mDNS ICE candidate`, 'WARN');
+                            return;
+                        }
+                        const candidateMsg = 'CANDIDATE!' + JSON.stringify({
+                            SdpMid: event.candidate.sdpMid,
+                            SdpMLineIndex: event.candidate.sdpMLineIndex,
+                            Candidate: event.candidate.candidate
+                        });
+                        ws.send(candidateMsg);
+                        log(`📤 Sent ICE candidate`);
+                    }
+                };
+
+                pc.oniceconnectionstatechange = async () => {
+                    log(`🔗 ICE connection state: ${pc.iceConnectionState}`);
+                    
+                    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                        updateStatus('connected');
+                        reconnectAttempts = 0; // Reset on successful connection
+                        log('🎉 WebRTC connection established successfully!');
+                    } else if (pc.iceConnectionState === 'disconnected' && reconnectAttempts < maxReconnectAttempts) {
+                        log(`⚠️ ICE disconnected, attempting reconnect ${reconnectAttempts + 1}/${maxReconnectAttempts}`, 'WARN');
+                        reconnectAttempts++;
+                        updateStatus('connecting');
+                        stopStream();
+                        setTimeout(startStream, reconnectDelay);
+                    } else if (pc.iceConnectionState === 'failed') {
+                        log('❌ ICE connection failed, stopping stream', 'ERROR');
+                        updateStatus('disconnected');
+                        stopStream();
+                    }
+                };
+
+                pc.onconnectionstatechange = () => {
+                    log(`🔌 Connection state: ${pc.connectionState}`);
+                };
+
+                ws = new WebSocket('wss://websockettest-eggy.onrender.com');
+                await new Promise((resolve, reject) => {
+                    ws.onopen = () => {
+                        log('🌐 WebSocket connected to signaling server');
+                        ws.send(JSON.stringify({ type: 'register', peer_id: 'web-client' }));
+                        log('📝 Registration sent');
+                        resolve();
+                    };
+                    ws.onerror = (error) => {
+                        log(`❌ WebSocket error: ${error.message || error}`, 'ERROR');
+                        reject(error);
+                    };
+                });
+
+                ws.onmessage = async (event) => {
+                    let message;
+                    if (event.data instanceof Blob) {
+                        message = await event.data.text();
+                    } else {
+                        message = event.data;
+                    }
+                    
+                    // Handle peer connection notifications
+                    if (message.includes('python-peer') && (message.includes('connected') || message.includes('registered'))) {
+                        log('🎯 Client 1 connected to signalling server', 'INFO');
+                        log('✨ Python camera server is ready - you can now start streaming!');
+                        
+                        // Enable start button and add visual indication
+                        startBtn.style.background = 'linear-gradient(45deg, #4CAF50, #45a049)';
+                        startBtn.innerHTML = `<span class="status-indicator connected"></span>Ready to Stream`;
+                        return;
+                    }
+                    
+                    if (message.startsWith('ANSWER!')) {
+                        try {
+                            const data = JSON.parse(message.slice(7));
+                            const answer = new RTCSessionDescription({
+                                type: 'answer',
+                                sdp: data.Sdp
+                            });
+                            await pc.setRemoteDescription(answer);
+                            log('✅ Remote description (answer) set successfully');
+                        } catch (e) {
+                            log(`❌ Error processing answer: ${e.message}`, 'ERROR');
+                        }
+                    } else if (message.startsWith('CANDIDATE!')) {
+                        try {
+                            const data = JSON.parse(message.slice(10));
+                            if (data.Candidate.includes('.local')) {
+                                log(`Skipping mDNS ICE candidate`, 'WARN');
+                                return;
+                            }
+                            const candidate = new RTCIceCandidate({
+                                sdpMid: data.SdpMid,
+                                sdpMLineIndex: data.SdpMLineIndex,
+                                candidate: data.Candidate
+                            });
+                            await pc.addIceCandidate(candidate);
+                            log('📥 ICE candidate added');
+                        } catch (e) {
+                            log(`❌ Error processing candidate: ${e.message}`, 'ERROR');
+                        }
+                    } else if (message === 'bye') {
+                        log('👋 Received bye signal, stopping stream');
+                        stopStream();
+                    } else {
+                        log(`📨 Message: ${message}`);
+                    }
+                };
+
+                ws.onclose = () => {
+                    log('🔌 WebSocket connection closed');
+                    updateStatus('disconnected');
+                    rgbStatus.textContent = 'Disconnected';
+                    thermalStatus.textContent = 'Disconnected';
+                    
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        log(`🔄 Attempting WebSocket reconnect ${reconnectAttempts + 1}/${maxReconnectAttempts}`, 'WARN');
+                        reconnectAttempts++;
+                        updateStatus('connecting');
+                        setTimeout(startStream, reconnectDelay);
+                    } else {
+                        log('❌ Max reconnect attempts reached, stopping', 'ERROR');
+                        stopStream();
+                    }
+                };
+
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                log('📤 Created and set local description (offer)');
+                
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send('OFFER!' + JSON.stringify({
+                        SessionType: offer.type,
+                        Sdp: offer.sdp
+                    }));
+                    log('📡 Offer sent to server');
+                } else {
+                    throw new Error('WebSocket not open after connection');
+                }
+            } catch (e) {
+                log(`❌ Error starting stream: ${e.message}`, 'ERROR');
+                updateStatus('disconnected');
+                stopStream();
+            }
+        }
+
+        function stopStream() {
+            log('🛑 Stopping WebRTC stream...');
+            updateStatus('disconnected');
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            
+            rgbVideo.srcObject = null;
+            thermalVideo.srcObject = null;
+            rgbStatus.textContent = 'Disconnected';
+            thermalStatus.textContent = 'Disconnected';
+            rgbStats.textContent = '0 FPS';
+            thermalStats.textContent = '0 FPS';
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            
+            // Reset button appearance
+            startBtn.style.background = 'linear-gradient(45deg, #2196F3, #21CBF3)';
+            startBtn.innerHTML = `<span class="status-indicator disconnected"></span>Start Stream`;
+            
+            rgbFrameCount = 0;
+            thermalFrameCount = 0;
+        }
+
+        // Error handling for video elements
+        rgbVideo.onerror = (e) => {
+            log('❌ RGB video error occurred', 'ERROR');
+            rgbStatus.textContent = 'Error';
+        };
+
+        thermalVideo.onerror = (e) => {
+            log('❌ Thermal video error occurred', 'ERROR');
+            thermalStatus.textContent = 'Error';
+        };
+
+        startBtn.addEventListener('click', startStream);
+        stopBtn.addEventListener('click', stopStream);
+
+        // Initialize stats update interval
+        setInterval(updateStreamStats, 1000);
+
+        log('🚀 Application initialized and ready');
+    </script>
+</body>
+</html>
