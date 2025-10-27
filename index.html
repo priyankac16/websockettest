@@ -368,7 +368,9 @@
         const volumeSlider = document.getElementById('volume-slider');
         const volumeValue = document.getElementById('volume-value');
         const audioBars = document.getElementById('audio-bars');
-
+        const muteBtn = document.getElementById('mute-btn');
+        let micStream = null;
+ 
         let pc = null;
         let ws = null;
         let reconnectAttempts = 0;
@@ -578,10 +580,31 @@
                     ]
                 });
 
-                // Add transceivers for RGB, thermal video, and audio
+                // Add transceivers for RGB and thermal video (recvonly)
                 pc.addTransceiver('video', { direction: 'recvonly' }); // RGB
                 pc.addTransceiver('video', { direction: 'recvonly' }); // Thermal
-                pc.addTransceiver('audio', { direction: 'recvonly' }); // Audio
+
+                // Capture microphone and add to connection (sendonly)
+                try {
+                    micStream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            channelCount: 1,
+                            sampleRate: 48000,
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                    for (const track of micStream.getAudioTracks()) {
+                        pc.addTrack(track, micStream);
+                    }
+                    audioStatus.textContent = 'Sending';
+                    audioStats.textContent = 'Mic Active';
+                    setupAudioAnalysis(micStream);
+                    log('Microphone stream added to peer connection');
+                } catch (err) {
+                    log(`Failed to get microphone access: ${err.message}`, 'ERROR');
+                }
 
                 let receivedTracks = [];
 
@@ -722,6 +745,14 @@
                 audioContext = null;
                 audioAnalyzer = null;
             }
+
+            // Stop microphone tracks
+            if (micStream) {
+                try {
+                    micStream.getTracks().forEach(t => t.stop());
+                } catch (e) {}
+                micStream = null;
+            }
             
             rgbVideo.srcObject = null;
             thermalVideo.srcObject = null;
@@ -792,7 +823,7 @@
         // Event listeners
         startBtn.addEventListener('click', startStream);
         stopBtn.addEventListener('click', stopStream);
-        muteBtn.addEventListener('click', toggleMute);
+        if (muteBtn) muteBtn.addEventListener('click', toggleMute);
         volumeSlider.addEventListener('input', updateVolume);
 
         // Initialize audio visualization bars

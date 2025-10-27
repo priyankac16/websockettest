@@ -721,10 +721,58 @@ class OptimizedCameraVideoStreamTrack(VideoStreamTrack):
 # Replace the original CameraVideoStreamTrack with the optimized version
 CameraVideoStreamTrack = OptimizedCameraVideoStreamTrack
 
+async def play_incoming_audio(track):
+    """Consume incoming WebRTC audio track and play it via PyAudio output."""
+    p = None
+    output_stream = None
+    try:
+        while True:
+            frame = await track.recv()
+            # Determine audio params from the first frame
+            if output_stream is None:
+                channels = 2 if getattr(frame, "layout", None) and getattr(frame.layout, "name", "").startswith("stereo") else 1
+                sample_rate = getattr(frame, "sample_rate", 48000)
+                p = pyaudio.PyAudio()
+                output_stream = p.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=sample_rate,
+                    output=True,
+                    frames_per_buffer=960
+                )
+                logger.info(f"Audio playback stream opened: {sample_rate}Hz, {channels} channels")
+            # Convert frame to raw PCM bytes
+            try:
+                pcm_bytes = frame.planes[0].to_bytes()
+            except Exception:
+                # Fallback conversion
+                pcm_bytes = frame.to_ndarray(format="s16").tobytes(order="C")
+            # Write to audio device
+            if output_stream:
+                output_stream.write(pcm_bytes)
+    except Exception as e:
+        logger.error(f"Audio playback stopped: {e}")
+    finally:
+        try:
+            if output_stream:
+                output_stream.stop_stream()
+                output_stream.close()
+        except Exception:
+            pass
+        try:
+            if p:
+                p.terminate()
+        except Exception:
+            pass
+        logger.info("Audio playback resources cleaned up")
+
 async def run(offer, pc, camera_track, thermal_track, audio_track):
     @pc.on("track")
     def on_track(track):
         logger.info(f"Received track: {track.kind}")
+        if track.kind == "audio":
+            logger.info("Incoming audio track received - starting playback task")
+            asyncio.create_task(play_incoming_audio(track))
 
     @pc.on("iceconnectionstatechange")
     async def on_ice_connection_state_change():
@@ -752,10 +800,9 @@ async def run(offer, pc, camera_track, thermal_track, audio_track):
             pc.addTrack(thermal_track)
             logger.info("Thermal camera track added to peer connection (Track 1)")
             
-        # Add audio track third (will be track 2)
+        # Do not add a local audio track; we expect to receive audio from the browser
         if audio_track:
-            pc.addTrack(audio_track)
-            logger.info("Audio track added to peer connection (Track 2)")
+            logger.info("Local audio track is disabled in this configuration; ignoring provided audio_track")
 
         if not offer:
             logger.error("Invalid offer: Empty SDP")
@@ -866,13 +913,9 @@ async def main():
                 logger.error(f"Failed to initialize thermal camera track: {e}")
                 continue
                 
-            # Initialize audio track
-            try:
-                audio_track = AudioStreamTrack()
-                logger.info("Audio track initialized")
-            except Exception as e:
-                logger.error(f"Failed to initialize audio track: {e}")
-                continue
+            # Configure to receive audio from the browser and play locally
+            audio_track = None
+            logger.info("Configured to receive remote audio and play on speaker")
 
             @pc.on("datachannel")
             def on_datachannel(channel):
